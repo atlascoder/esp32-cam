@@ -11,6 +11,8 @@
 
 static const char *TAG = "example:http_jpg";
 
+static httpd_handle_t _server = NULL;
+
 static camera_config_t camera_config = {
     .pin_pwdn = CONFIG_PWDN,
     .pin_reset = CONFIG_RESET,
@@ -90,6 +92,7 @@ static esp_err_t jpg_httpd_handler(httpd_req_t *req)
     httpd_resp_send_500(req);
     return ESP_FAIL;
   }
+
   res = httpd_resp_set_type(req, "image/jpeg");
   if (res == ESP_OK)
   {
@@ -124,6 +127,7 @@ httpd_handle_t start_webserver(void)
     // Set URI handlers
     ESP_LOGI(TAG, "Registering URI handlers");
     httpd_register_uri_handler(server, &uri_handler_jpg);
+    ESP_LOGD(TAG, "httpd started");
     return server;
   }
 
@@ -175,7 +179,26 @@ static esp_err_t event_handler(void *ctx, system_event_t *event)
   return ESP_OK;
 }
 
-static void initialise_wifi(void *arg)
+static void wifi_event_handler(void* arg, esp_event_base_t event_base,
+                                    int32_t event_id, void* event_data)
+{
+    if (event_id == WIFI_EVENT_AP_STACONNECTED) {
+        wifi_event_ap_staconnected_t* event = (wifi_event_ap_staconnected_t*) event_data;
+        ESP_LOGI(TAG, "station "MACSTR" join, AID=%d",
+                 MAC2STR(event->mac), event->aid);
+        
+        if (_server == NULL){
+          _server = start_webserver();
+        }
+
+    } else if (event_id == WIFI_EVENT_AP_STADISCONNECTED) {
+        wifi_event_ap_stadisconnected_t* event = (wifi_event_ap_stadisconnected_t*) event_data;
+        ESP_LOGI(TAG, "station "MACSTR" leave, AID=%d",
+                 MAC2STR(event->mac), event->aid);
+    }
+}
+
+static void initialise_sta(void *arg)
 {
   tcpip_adapter_init();
   ESP_ERROR_CHECK(esp_event_loop_init(event_handler, arg));
@@ -189,15 +212,50 @@ static void initialise_wifi(void *arg)
       },
   };
   ESP_LOGI(TAG, "Setting WiFi configuration SSID %s...", wifi_config.sta.ssid);
+
   ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
   ESP_ERROR_CHECK(esp_wifi_set_config(ESP_IF_WIFI_STA, &wifi_config));
   ESP_ERROR_CHECK(esp_wifi_start());
 }
 
+static void wifi_init_softap()
+{
+    ESP_ERROR_CHECK(esp_netif_init());
+    ESP_ERROR_CHECK(esp_event_loop_create_default());
+    esp_netif_create_default_wifi_ap();
+
+    wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
+    ESP_ERROR_CHECK(esp_wifi_init(&cfg));
+
+    // idf 4.3
+    // ESP_ERROR_CHECK(esp_event_handler_instance_register(WIFI_EVENT,
+    //                                                     ESP_EVENT_ANY_ID,
+    //                                                     &wifi_event_handler,
+    //                                                     NULL,
+    //                                                     NULL));
+
+    // idf 4.1
+    esp_event_handler_register(WIFI_EVENT, ESP_EVENT_ANY_ID, &wifi_event_handler, NULL);
+
+    wifi_config_t wifi_config = {
+        .ap = {
+            .ssid = "espcam",
+            .ssid_len = strlen("espcam"),
+            .authmode = WIFI_AUTH_OPEN,
+            .max_connection = 5
+        },
+    };
+
+    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_AP));
+    ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_AP, &wifi_config));
+    ESP_ERROR_CHECK(esp_wifi_start());
+    ESP_ERROR_CHECK(esp_wifi_set_ps(WIFI_PS_NONE));
+}
+
 void app_main()
 {
-  static httpd_handle_t server = NULL;
   ESP_ERROR_CHECK(nvs_flash_init());
   init_camera();
-  initialise_wifi(&server);
+  initialise_sta(&_server);
+  // wifi_init_softap();
 }

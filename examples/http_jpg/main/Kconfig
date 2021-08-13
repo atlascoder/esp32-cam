@@ -2,9 +2,9 @@ menu "Example configuration"
 
   menu "Wifi Configuration"
     config WIFI_SSID
-      string "Wifi SSID"
+      string "Ssid"
     config WIFI_PASSWORD
-      string "Wifi password"
+      string "Pasword"
   endmenu
 
   menu "Camera configuration"
